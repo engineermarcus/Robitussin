@@ -1,54 +1,40 @@
-const { default: makeWASocket, useSingleFileAuthState } = require('@whiskeysockets/baileys');
-const { Boom } = require('@hapi/boom');
-const { unlinkSync } = require('fs');
+const { makeWASocket, useSingleFileAuthState } = require('@whiskeysockets/baileys');
+const fs = require('fs-extra');
 
 // Load authentication state
 const { state, saveState } = useSingleFileAuthState('./auth_info.json');
 
-// Function to start the bot
-async function startBot() {
-    const sock = makeWASocket({
-        auth: state,
-        printQRInTerminal: true,
-    });
+// Create the WhatsApp connection
+const sock = makeWASocket({
+    auth: state,
+    printQRInTerminal: true,
+});
 
-    // Save authentication state on changes
-    sock.ev.on('creds.update', saveState);
+// Save authentication state on change
+sock.ev.on('creds.update', saveState);
 
-    // Handle connection updates
-    sock.ev.on('connection.update', (update) => {
-        const { connection, lastDisconnect } = update;
-        if (connection === 'close') {
-            const shouldReconnect = (lastDisconnect.error = Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
-            console.log('Connection closed. Reconnecting...', shouldReconnect);
-            if (shouldReconnect) {
-                startBot();
-            } else {
-                unlinkSync('./auth_info.json');
-                console.log('Logged out. Please delete auth_info.json and restart the bot.');
-            }
-        } else if (connection === 'open') {
-            console.log('Connected successfully');
-        }
-    });
+// Handle incoming messages
+sock.ev.on('messages.upsert', async (m) => {
+    const msg = m.messages[0];
+    if (!msg.message) return;
 
-    // Handle incoming messages
-    sock.ev.on('messages.upsert', async (m) => {
-        console.log(JSON.stringify(m, undefined, 2));
+    const sender = msg.key.remoteJid;
+    const messageText = msg.message.conversation || msg.message.extendedTextMessage?.text;
 
-        const msg = m.messages[0];
-        if (!msg.message) return;
+    console.log(`Received from ${sender}: ${messageText}`);
 
-        const from = msg.key.remoteJid;
-        const messageType = Object.keys(msg.message)[0];
+    if (messageText === 'hi') {
+        await sock.sendMessage(sender, { text: 'Hello! How can I help you?' });
+    }
+});
 
-        // Example: Echo received messages
-        if (messageType === 'conversation' || messageType === 'extendedTextMessage') {
-            const text = msg.message.conversation || msg.message.extendedTextMessage.text;
-            await sock.sendMessage(from, { text: `You said: ${text}` });
-        }
-    });
-}
-
-// Start the bot
-startBot();
+// Handle connection updates
+sock.ev.on('connection.update', (update) => {
+    const { connection, lastDisconnect } = update;
+    if (connection === 'close') {
+        console.log('Connection closed, reconnecting...');
+        process.exit(1);
+    } else if (connection === 'open') {
+        console.log('Connected to WhatsApp!');
+    }
+});
